@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PGA Championship Pool</title>
+  <title>U.S. Open Pool</title>
   <style>
     :root {
       --bg: #f4efe2;
@@ -178,6 +178,29 @@
       font-weight: 700;
     }
 
+    .player-main {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .nation-flag {
+      width: 15px;
+      height: 11px;
+      border: 1px solid rgba(0, 0, 0, 0.2);
+      border-radius: 2px;
+      object-fit: cover;
+      flex: 0 0 auto;
+      background: #f2ece0;
+    }
+
+    .wc-match-note {
+      margin-top: 3px;
+      font-size: 0.7rem;
+      color: var(--muted);
+      line-height: 1.25;
+    }
+
     .fine {
       font-size: 0.8rem;
       color: var(--muted);
@@ -196,8 +219,8 @@
 </head>
 <body>
   <main class="page">
-    <h1>PGA Championship Pool Board</h1>
-    <p class="subtitle">Groups scored by aggregate of best 3 counted totals. Counted totals use your cut-line rules.</p>
+    <h1>U.S. Open Pool Board</h1>
+    <p class="subtitle">Groups scored by aggregate of best 3 counted totals. Counted totals apply cut-line and World Cup nation-goal rules.</p>
 
     <div class="controls">
       <button id="refreshBtn" type="button">Refresh Scores</button>
@@ -207,26 +230,30 @@
     <p class="error" id="error"></p>
     <section class="groups" id="groups"></section>
 
-    <p class="fine">Scoring rule applied after cut is in effect: if player made the cut, counted total is floored to the cut line. If player missed cut, counted total = cut line + 1. Before cut, counted score matches actual score.</p>
+    <p class="fine">Rules: after cut, made-cut players are floored to the cut line and missed-cut players are set to cut line + 1. During U.S. Open weekend, each World Cup goal scored by a golfer's home nation removes one stroke. If a home nation does not play over weekend, no bonus. Missed-cut players do not receive post-cut goal bonuses.</p>
   </main>
 
   <script>
     const GROUPS = [
       {
-        name: "Spieth Simps",
-        players: ["Scottie Scheffler", "Ludvig Aberg", "Chris Gotterup", "Bryson DeChambeau"]
+        name: "Jack Knicklaus",
+        players: ["Xander Schauffele", "Russell Henley", "Viktor Hovland", "Bryson DeChambeau"]
       },
       {
-        name: "Nobody Wins but Zach Johnson",
-        players: ["Rory McIlroy", "Collin Morikawa", "Rickie Fowler", "Jordan Spieth"]
+        name: "Rory Finds the Net",
+        players: ["Rory McIlroy", "Ludvig Aberg", "Collin Morikawa", "Rickie Fowler", "Jordan Spieth"]
       },
       {
-        name: "Lefty Misfit",
-        players: ["Xander Schauffele", "Matt Fitzpatrick", "Min Woo Lee", "Adam Scott"]
+        name: "Lefty Luck",
+        players: [ "Cameron Young", "Matt Fitzpatrick", "Min Woo Lee", "Adam Scott"]
       },
       {
         name: "The Duck Hooks",
-        players: ["Cameron Young", "Tommy Fleetwood", "Hideki Matsuyama", "Akshay Bhatia"]
+        players: ["Scottie Scheffler", "Tommy Fleetwood", "Hideki Matsuyama", "Akshay Bhatia"]
+      },
+      {
+        name: "Stiff Shaft",
+        players: ["Jon Rahm", "Chris Gotterup", "Shane Lowry", "Sam Burns"]
       }
     ];
 
@@ -238,6 +265,22 @@
     };
 
     const ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard";
+    const WORLD_CUP_ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard";
+
+    const COUNTRY_ALIASES = {
+      usa: ["united states", "united states of america", "us", "u.s."],
+      eng: ["england"],
+      sco: ["scotland"],
+      nir: ["northern ireland"],
+      irl: ["ireland", "republic of ireland"],
+      rsa: ["south africa"],
+      kor: ["south korea", "korea republic", "korea"],
+      aus: ["australia"],
+      jap: ["japan"],
+      swe: ["sweden"],
+      esp: ["spain"],
+      can: ["canada"]
+    };
 
     const groupsEl = document.getElementById("groups");
     const metaEl = document.getElementById("meta");
@@ -289,11 +332,26 @@
 
     function getPgaEvent(data) {
       const events = Array.isArray(data?.events) ? data.events : [];
-      const pga = events.find((event) => /pga championship/i.test(event?.name || ""));
-      if (pga) {
-        return pga;
+      const usOpen = events.find((event) => /u\.?s\.?\s*open/i.test(event?.name || ""));
+      if (usOpen) {
+        return usOpen;
       }
       return events.find((event) => event?.competitions?.[0]?.recent) || events[0] || null;
+    }
+
+    function parseCountryCodeFromFlag(flagHref) {
+      const href = String(flagHref || "");
+      const match = href.match(/\/countries\/\d+\/([a-z]{3})\.png/i);
+      return match ? normalizeName(match[1]) : "";
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
     }
 
     function parsePlayers(competition) {
@@ -317,6 +375,9 @@
         return {
           name: c?.athlete?.displayName || c?.athlete?.fullName || "Unknown",
           nameKey: normalizeName(c?.athlete?.displayName || c?.athlete?.fullName || ""),
+          countryName: String(c?.athlete?.flag?.alt || ""),
+          countryCode: parseCountryCodeFromFlag(c?.athlete?.flag?.href),
+          countryFlagHref: String(c?.athlete?.flag?.href || ""),
           scoreTotal: total,
           rounds,
           thruToday,
@@ -379,6 +440,207 @@
       return players.some((p) => p.rounds[3] !== null || p.rounds[4] !== null);
     }
 
+    function nationKeys(code, name) {
+      const codeKey = normalizeName(code);
+      const nameKey = normalizeName(name);
+      const aliases = [];
+      if (codeKey && COUNTRY_ALIASES[codeKey]) {
+        aliases.push(...COUNTRY_ALIASES[codeKey]);
+      }
+      const keys = [codeKey, nameKey, ...aliases.map(normalizeName)].filter(Boolean);
+      return Array.from(new Set(keys));
+    }
+
+    function yyyymmddFromDateUTC(date) {
+      const y = date.getUTCFullYear();
+      const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const d = String(date.getUTCDate()).padStart(2, "0");
+      return `${y}${m}${d}`;
+    }
+
+    function getTournamentDatesFromCompetition(competition) {
+      const start = new Date(competition?.date || Date.now());
+      const end = new Date(competition?.endDate || competition?.date || Date.now());
+
+      const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+      const endDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+      const days = [];
+
+      while (cursor <= endDay && days.length < 8) {
+        days.push(new Date(cursor));
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+
+      return days;
+    }
+
+    function cutMomentFromCompetition(competition) {
+      const start = new Date(competition?.date || Date.now());
+      const cutMoment = new Date(start);
+      cutMoment.setUTCDate(cutMoment.getUTCDate() + 2);
+      return cutMoment;
+    }
+
+    function parseGoals(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function weekendDayLabel(date) {
+      const day = date.getUTCDay();
+      if (day === 4) {
+        return "Thu";
+      }
+      if (day === 5) {
+        return "Fri";
+      }
+      if (day === 6) {
+        return "Sat";
+      }
+      if (day === 0) {
+        return "Sun";
+      }
+      return "Weekend";
+    }
+
+    async function fetchWorldCupNationGoals(competition) {
+      const tournamentDates = getTournamentDatesFromCompetition(competition);
+      const cutMoment = cutMomentFromCompetition(competition);
+      const byNation = new Map();
+
+      function getNationStats(code, name) {
+        const keys = nationKeys(code, name);
+        let stats = null;
+        for (const key of keys) {
+          if (byNation.has(key)) {
+            stats = byNation.get(key);
+            break;
+          }
+        }
+        if (!stats) {
+          stats = { playedWeekend: false, preCutGoals: 0, postCutGoals: 0, matches: [] };
+        }
+        for (const key of keys) {
+          byNation.set(key, stats);
+        }
+        return stats;
+      }
+
+      const responses = await Promise.all(
+        tournamentDates.map((d) => {
+          const dateKey = yyyymmddFromDateUTC(d);
+          return fetch(`${WORLD_CUP_ENDPOINT}?dates=${dateKey}`, { cache: "no-store" });
+        })
+      );
+
+      for (const response of responses) {
+        if (!response.ok) {
+          throw new Error(`World Cup feed HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        const events = Array.isArray(data?.events) ? data.events : [];
+
+        for (const event of events) {
+          const eventDate = new Date(event?.date || Date.now());
+          const isPostCut = eventDate >= cutMoment;
+          const competitionEntry = event?.competitions?.[0];
+          const competitors = Array.isArray(competitionEntry?.competitors)
+            ? competitionEntry.competitors
+            : [];
+
+          for (const team of competitors) {
+            const code = String(team?.team?.abbreviation || "");
+            const name = String(team?.team?.displayName || team?.team?.name || "");
+            const goals = parseGoals(team?.score);
+            const stats = getNationStats(code, name);
+            stats.playedWeekend = true;
+
+            const opponent = competitors.find((candidate) => candidate !== team);
+            const opponentName = String(
+              opponent?.team?.abbreviation || opponent?.team?.shortDisplayName || opponent?.team?.displayName || "TBD"
+            );
+            const teamName = String(team?.team?.abbreviation || team?.team?.shortDisplayName || name || "");
+            const opponentGoals = parseGoals(opponent?.score);
+            const dayLabel = weekendDayLabel(eventDate);
+            const status = String(
+              competitionEntry?.status?.type?.shortDetail ||
+              competitionEntry?.status?.type?.detail ||
+              competitionEntry?.status?.type?.name ||
+              ""
+            ).trim();
+
+            stats.matches.push({
+              eventId: String(event?.id || ""),
+              dayLabel,
+              status,
+              summary: `${teamName} ${goals}-${opponentGoals} ${opponentName}`
+            });
+
+            if (isPostCut) {
+              stats.postCutGoals += goals;
+            } else {
+              stats.preCutGoals += goals;
+            }
+          }
+        }
+      }
+
+      return byNation;
+    }
+
+    function worldCupBonusForPlayer(player, worldCupGoalsByNation, cutInEffect) {
+      const keys = nationKeys(player.countryCode, player.countryName);
+      let nationData = null;
+      for (const key of keys) {
+        if (worldCupGoalsByNation.has(key)) {
+          nationData = worldCupGoalsByNation.get(key);
+          break;
+        }
+      }
+
+      if (!nationData || !nationData.playedWeekend) {
+        return 0;
+      }
+
+      const preCutBonus = nationData.preCutGoals;
+      const postCutBonus = nationData.postCutGoals;
+
+      if (!cutInEffect || player.madeCut) {
+        return preCutBonus + postCutBonus;
+      }
+      return preCutBonus;
+    }
+
+    function worldCupMatchDetailsForPlayer(player, worldCupGoalsByNation) {
+      const keys = nationKeys(player.countryCode, player.countryName);
+      let nationData = null;
+      for (const key of keys) {
+        if (worldCupGoalsByNation.has(key)) {
+          nationData = worldCupGoalsByNation.get(key);
+          break;
+        }
+      }
+
+      if (!nationData || !nationData.playedWeekend || !Array.isArray(nationData.matches)) {
+        return [];
+      }
+
+      const seen = new Set();
+      const details = [];
+      for (const match of nationData.matches) {
+        const dedupeKey = `${match.eventId}|${match.summary}`;
+        if (seen.has(dedupeKey)) {
+          continue;
+        }
+        seen.add(dedupeKey);
+
+        const statusPart = match.status ? ` (${match.status})` : "";
+        details.push(`${match.dayLabel}: ${match.summary}${statusPart}`);
+      }
+
+      return details;
+    }
+
     function inferCutLine(players, competition, cutInEffect) {
       const fromNotes = parseCutLineFromNotes(competition);
       if (fromNotes !== null) {
@@ -397,22 +659,28 @@
       return null;
     }
 
-    function withCountedScores(players, cutLine, cutInEffect) {
+    function withCountedScores(players, cutLine, cutInEffect, worldCupGoalsByNation) {
       return players.map((p) => {
         const actual = p.scoreTotal;
+        const worldCupBonus = worldCupBonusForPlayer(p, worldCupGoalsByNation, cutInEffect);
+        const worldCupMatchDetails = worldCupMatchDetailsForPlayer(p, worldCupGoalsByNation);
 
         if (!cutInEffect) {
-          return { ...p, countedScore: actual };
+          const counted = actual === null ? null : actual - worldCupBonus;
+          return { ...p, worldCupBonus, worldCupMatchDetails, countedScore: counted };
         }
 
         const safeCutLine = cutLine ?? 0;
         let counted;
-        if (p.madeCut) {
-          counted = Math.min(actual ?? safeCutLine, safeCutLine);
+        if (actual === null) {
+          counted = null;
+        } else if (p.madeCut) {
+          counted = Math.min(actual, safeCutLine);
         } else {
           counted = safeCutLine + 1;
         }
-        return { ...p, countedScore: counted };
+        const adjusted = counted === null ? null : counted - worldCupBonus;
+        return { ...p, worldCupBonus, worldCupMatchDetails, countedScore: adjusted };
       });
     }
 
@@ -450,6 +718,11 @@
             thruToday: "-",
             scoreTotal: null,
             countedScore: null,
+            countryName: "",
+            countryCode: "",
+            countryFlagHref: "",
+            worldCupBonus: 0,
+            worldCupMatchDetails: [],
             madeCut: false,
             statusText: "Not in feed"
           };
@@ -498,7 +771,7 @@
 
         const table = document.createElement("table");
         table.innerHTML =
-          "<thead><tr><th>Player</th><th>Score</th><th>Thru</th><th>R1</th><th>R2</th><th>R3</th><th>R4</th><th>Counted</th></tr></thead>";
+          "<thead><tr><th>Player</th><th>Score</th><th>Thru</th><th>R1</th><th>R2</th><th>R3</th><th>R4</th><th>WC</th><th>Counted</th></tr></thead>";
 
         const tbody = document.createElement("tbody");
 
@@ -521,13 +794,14 @@
           }
 
           tr.innerHTML = [
-            `<td>${player.name}${tag}</td>`,
+            `<td><div class="player-main">${player.countryFlagHref ? `<img class="nation-flag" src="${escapeHtml(player.countryFlagHref)}" alt="${escapeHtml(player.countryName || player.countryCode || "Country")}" loading="lazy">` : ""}<span>${escapeHtml(player.name)}</span></div>${player.worldCupMatchDetails?.length ? `<div class="wc-match-note">${escapeHtml(player.worldCupMatchDetails.join(" | "))}</div>` : ""}${tag}</td>`,
             `<td>${numToScore(player.scoreTotal)}</td>`,
             `<td>${player.thruToday || "-"}</td>`,
             `<td>${formatRound(player.rounds[1])}</td>`,
             `<td>${formatRound(player.rounds[2])}</td>`,
             `<td>${formatRound(player.rounds[3])}</td>`,
             `<td>${formatRound(player.rounds[4])}</td>`,
+            `<td>-${player.worldCupBonus || 0}</td>`,
             `<td>${numToScore(player.countedScore)}</td>`
           ].join("");
 
@@ -543,7 +817,7 @@
 
     async function loadScores() {
       errorEl.textContent = "";
-      metaEl.textContent = "Loading latest PGA Championship feed...";
+      metaEl.textContent = "Loading latest U.S. Open feed...";
 
       try {
         const response = await fetch(ENDPOINT, { cache: "no-store" });
@@ -562,7 +836,13 @@
         const parsedPlayers = parsePlayers(competition);
         const cutInEffect = cutIsInEffect(parsedPlayers);
         const cutLine = inferCutLine(parsedPlayers, competition, cutInEffect);
-        const players = withCountedScores(parsedPlayers, cutLine, cutInEffect);
+        let worldCupGoalsByNation = new Map();
+        try {
+          worldCupGoalsByNation = await fetchWorldCupNationGoals(competition);
+        } catch (_) {
+          worldCupGoalsByNation = new Map();
+        }
+        const players = withCountedScores(parsedPlayers, cutLine, cutInEffect, worldCupGoalsByNation);
 
         const playerIndex = new Map(players.map((p) => [p.nameKey, p]));
         const groupsScored = buildGroupCards(GROUPS, playerIndex);
@@ -570,7 +850,7 @@
         render(groupsScored, { cutLine, cutInEffect });
 
         const when = new Date();
-        const eventName = event?.name || "PGA Championship";
+        const eventName = event?.name || "U.S. Open";
         metaEl.textContent = `${eventName} • Updated ${when.toLocaleString()}`;
       } catch (err) {
         groupsEl.innerHTML = "";
