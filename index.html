@@ -369,7 +369,8 @@
         }
 
         const total = scoreToNumber(c?.score);
-        const playedSaturday = rounds[3] !== null || lines.some((line) => Number(line?.period) >= 3);
+        const playedSaturday = rounds[3] !== null || rounds[4] !== null;
+        const cutStatusSignal = inferCutStatusSignal(c);
         const thruToday = getThruToday(c, lines);
 
         return {
@@ -382,9 +383,40 @@
           rounds,
           thruToday,
           madeCut: playedSaturday,
+          cutStatusSignal,
           statusText: c?.status?.type?.name || c?.status?.displayName || ""
         };
       });
+    }
+
+    function inferCutStatusSignal(competitor) {
+      const statusBits = [
+        competitor?.status?.type?.name,
+        competitor?.status?.type?.shortDetail,
+        competitor?.status?.type?.detail,
+        competitor?.status?.displayName,
+        competitor?.status?.displayValue,
+        competitor?.position?.displayName,
+        competitor?.position?.shortName,
+        competitor?.curatedRank?.current,
+        competitor?.curatedRank?.displayValue
+      ]
+        .map((v) => String(v || "").toLowerCase())
+        .join(" ");
+
+      if (!statusBits.trim()) {
+        return null;
+      }
+
+      if (/\bmade\s+cut\b/.test(statusBits)) {
+        return true;
+      }
+
+      if (/\b(mc|missed\s+cut|cut)\b/.test(statusBits)) {
+        return false;
+      }
+
+      return null;
     }
 
     function getThruToday(competitor, lines) {
@@ -436,8 +468,14 @@
       return null;
     }
 
-    function cutIsInEffect(players) {
-      return players.some((p) => p.rounds[3] !== null || p.rounds[4] !== null);
+    function cutIsInEffect(players, competition) {
+      if (parseCutLineFromNotes(competition) !== null) {
+        return true;
+      }
+
+      return players.some(
+        (p) => p.rounds[3] !== null || p.rounds[4] !== null || p.cutStatusSignal === false
+      );
     }
 
     function nationKeys(code, name) {
@@ -588,7 +626,7 @@
       return byNation;
     }
 
-    function worldCupBonusForPlayer(player, worldCupGoalsByNation, cutInEffect) {
+    function worldCupBonusForPlayer(player, worldCupGoalsByNation, cutInEffect, cutStatus = null) {
       const keys = nationKeys(player.countryCode, player.countryName);
       let nationData = null;
       for (const key of keys) {
@@ -605,7 +643,7 @@
       const preCutBonus = nationData.preCutGoals;
       const postCutBonus = nationData.postCutGoals;
 
-      if (!cutInEffect || player.madeCut) {
+      if (!cutInEffect || cutStatus === "made" || cutStatus === null) {
         return preCutBonus + postCutBonus;
       }
       return preCutBonus;
@@ -651,9 +689,26 @@
         return null;
       }
 
-      const missed = players.filter((p) => !p.madeCut && p.scoreTotal !== null).map((p) => p.scoreTotal);
-      if (missed.length > 0) {
-        return Math.min(...missed) - 1;
+      const missedBySignal = players
+        .filter((p) => p.cutStatusSignal === false && p.scoreTotal !== null)
+        .map((p) => p.scoreTotal);
+      if (missedBySignal.length > 0) {
+        return Math.min(...missedBySignal) - 1;
+      }
+
+      // Fallback: infer cut line from completed two-round totals (top 60 and ties).
+      const twoRoundTotals = players
+        .map((p) => {
+          if (p.rounds[1] === null || p.rounds[2] === null) {
+            return null;
+          }
+          return p.rounds[1] + p.rounds[2];
+        })
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => a - b);
+
+      if (twoRoundTotals.length >= 60) {
+        return twoRoundTotals[59];
       }
 
       return null;
@@ -662,25 +717,65 @@
     function withCountedScores(players, cutLine, cutInEffect, worldCupGoalsByNation) {
       return players.map((p) => {
         const actual = p.scoreTotal;
-        const worldCupBonus = worldCupBonusForPlayer(p, worldCupGoalsByNation, cutInEffect);
+        const resolvedCutStatus = !cutInEffect
+          ? null
+          : p.cutStatusSignal === true
+            ? "made"
+            : p.cutStatusSignal === false
+              ? "missed"
+              : p.madeCut
+                ? "made"
+                : cutLine !== null && actual !== null
+                  ? (actual <= cutLine ? "made" : "missed")
+                  : null;
+
+        const worldCupBonus = worldCupBonusForPlayer(p, worldCupGoalsByNation, cutInEffect, resolvedCutStatus);
         const worldCupMatchDetails = worldCupMatchDetailsForPlayer(p, worldCupGoalsByNation);
 
         if (!cutInEffect) {
           const counted = actual === null ? null : actual - worldCupBonus;
-          return { ...p, worldCupBonus, worldCupMatchDetails, countedScore: counted };
+          return {
+            ...p,
+            madeCut: false,
+            cutStatus: resolvedCutStatus,
+            worldCupBonus,
+            worldCupMatchDetails,
+            countedScore: counted
+          };
         }
 
-        const safeCutLine = cutLine ?? 0;
+        if (cutLine === null) {
+          const counted = actual === null ? null : actual - worldCupBonus;
+          return {
+            ...p,
+            madeCut: resolvedCutStatus === "made",
+            cutStatus: resolvedCutStatus,
+            worldCupBonus,
+            worldCupMatchDetails,
+            countedScore: counted
+          };
+        }
+
+        const safeCutLine = cutLine;
         let counted;
         if (actual === null) {
           counted = null;
-        } else if (p.madeCut) {
+        } else if (resolvedCutStatus === "made") {
           counted = Math.min(actual, safeCutLine);
-        } else {
+        } else if (resolvedCutStatus === "missed") {
           counted = safeCutLine + 1;
+        } else {
+          counted = actual;
         }
         const adjusted = counted === null ? null : counted - worldCupBonus;
-        return { ...p, worldCupBonus, worldCupMatchDetails, countedScore: adjusted };
+        return {
+          ...p,
+          madeCut: resolvedCutStatus === "made",
+          cutStatus: resolvedCutStatus,
+          worldCupBonus,
+          worldCupMatchDetails,
+          countedScore: adjusted
+        };
       });
     }
 
@@ -724,6 +819,7 @@
             worldCupBonus: 0,
             worldCupMatchDetails: [],
             madeCut: false,
+            cutStatus: null,
             statusText: "Not in feed"
           };
         });
@@ -787,9 +883,11 @@
             if (!context.cutInEffect) {
               tag = '<div class="tag made">Cut Pending</div>';
             } else {
-              tag = player.madeCut
+              tag = player.cutStatus === "made"
                 ? '<div class="tag made">Made Cut</div>'
-                : '<div class="tag cut">Missed Cut</div>';
+                : player.cutStatus === "missed"
+                  ? '<div class="tag cut">Missed Cut</div>'
+                  : '<div class="tag made">Cut Pending</div>';
             }
           }
 
@@ -834,7 +932,7 @@
         }
 
         const parsedPlayers = parsePlayers(competition);
-        const cutInEffect = cutIsInEffect(parsedPlayers);
+        const cutInEffect = cutIsInEffect(parsedPlayers, competition);
         const cutLine = inferCutLine(parsedPlayers, competition, cutInEffect);
         let worldCupGoalsByNation = new Map();
         try {
